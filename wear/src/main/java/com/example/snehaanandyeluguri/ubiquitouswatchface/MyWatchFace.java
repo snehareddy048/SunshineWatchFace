@@ -21,6 +21,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -29,13 +31,26 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.support.v4.content.ContextCompat;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.text.format.Time;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataEvent;
+import com.google.android.gms.wearable.DataEventBuffer;
+import com.google.android.gms.wearable.DataItem;
+import com.google.android.gms.wearable.DataMap;
+import com.google.android.gms.wearable.DataMapItem;
+import com.google.android.gms.wearable.Wearable;
+
 import java.lang.ref.WeakReference;
+import java.text.SimpleDateFormat;
+import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -83,7 +98,25 @@ public class MyWatchFace extends CanvasWatchFaceService {
         }
     }
 
-    private class Engine extends CanvasWatchFaceService.Engine {
+    private class Engine extends CanvasWatchFaceService.Engine implements DataApi.DataListener,
+            GoogleApiClient.ConnectionCallbacks,
+            GoogleApiClient.OnConnectionFailedListener{
+
+        private static final String WEATHER_PATH = "/weather";
+        private static final String HIGH_TEMPERATURE = "high_temperature";
+        private static final String LOW_TEMPERATURE = "low_temperature";
+        private static final String WEATHER_CONDITION = "weather_condition";
+        boolean registeredTimeZoneReceiver = false;
+        int digitalTextColor = -1;
+
+        private GoogleApiClient mGoogleApiClient;
+        Bitmap conditionIcon;
+        String highTemperature;
+        String lowTemperature;
+
+        Paint highTemperatureTextPaint;
+        Paint lowTemperatureTextPaint;
+
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
@@ -101,16 +134,26 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
         float mXOffset;
         float mYOffset;
+        float weatherYOffset;
+        private static final int SPACE_BETWEEN_TEMPERATURES = 10;
+
 
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
          * disable anti-aliasing in ambient mode.
          */
         boolean mLowBitAmbient;
+        Resources resources;
 
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
+
+            mGoogleApiClient = new GoogleApiClient.Builder(MyWatchFace.this)
+                    .addConnectionCallbacks(this)
+                    .addOnConnectionFailedListener(this)
+                    .addApi(Wearable.API)
+                    .build();
 
             setWatchFaceStyle(new WatchFaceStyle.Builder(MyWatchFace.this)
                     .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
@@ -118,14 +161,18 @@ public class MyWatchFace extends CanvasWatchFaceService {
                     .setShowSystemUiTime(false)
                     .setAcceptsTapEvents(true)
                     .build());
-            Resources resources = MyWatchFace.this.getResources();
+            resources = MyWatchFace.this.getResources();
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
 
             mBackgroundPaint = new Paint();
             mBackgroundPaint.setColor(resources.getColor(R.color.background));
+            digitalTextColor = ContextCompat.getColor(MyWatchFace.this, R.color.digital_text);
+
 
             mTextPaint = new Paint();
-            mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
+            mTextPaint = createTextPaint(digitalTextColor);
+            highTemperatureTextPaint = createTextPaint(digitalTextColor);
+            lowTemperatureTextPaint = createTextPaint(digitalTextColor);
 
             mTime = new Time();
         }
@@ -149,12 +196,19 @@ public class MyWatchFace extends CanvasWatchFaceService {
             super.onVisibilityChanged(visible);
 
             if (visible) {
+                mGoogleApiClient.connect();
                 registerReceiver();
 
                 // Update time zone in case it changed while we weren't visible.
                 mTime.clear(TimeZone.getDefault().getID());
                 mTime.setToNow();
-            } else {
+            } else
+            {
+                if (mGoogleApiClient != null && mGoogleApiClient.isConnected()) {
+                    Wearable.DataApi.removeListener(mGoogleApiClient, this);
+                    mGoogleApiClient.disconnect();
+                }
+
                 unregisterReceiver();
             }
 
@@ -185,14 +239,20 @@ public class MyWatchFace extends CanvasWatchFaceService {
             super.onApplyWindowInsets(insets);
 
             // Load resources that have alternate values for round watches.
-            Resources resources = MyWatchFace.this.getResources();
+
             boolean isRound = insets.isRound();
             mXOffset = resources.getDimension(isRound
                     ? R.dimen.digital_x_offset_round : R.dimen.digital_x_offset);
+            weatherYOffset = resources.getDimension(R.dimen.weather_y_offset);
             float textSize = resources.getDimension(isRound
                     ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
 
             mTextPaint.setTextSize(textSize);
+
+            float temperatureTextSize = resources.getDimension(isRound?R.dimen.temperature_text_size_round:
+                    R.dimen.temperature_text_size);
+            highTemperatureTextPaint.setTextSize(temperatureTextSize);
+            lowTemperatureTextPaint.setTextSize(temperatureTextSize);
         }
 
         @Override
@@ -214,6 +274,8 @@ public class MyWatchFace extends CanvasWatchFaceService {
                 mAmbient = inAmbientMode;
                 if (mLowBitAmbient) {
                     mTextPaint.setAntiAlias(!inAmbientMode);
+                    highTemperatureTextPaint.setAntiAlias(!inAmbientMode);
+                    lowTemperatureTextPaint.setAntiAlias(!inAmbientMode);
                 }
                 invalidate();
             }
@@ -261,8 +323,53 @@ public class MyWatchFace extends CanvasWatchFaceService {
             String text = mAmbient
                     ? String.format("%d:%02d", mTime.hour, mTime.minute)
                     : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
-            canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
+
+            // Draw time text in x-center of screen
+            float timeTextWidth = mTextPaint.measureText(text);
+            float halfTimeTextWidth = timeTextWidth / 2;
+            float xOffsetTime = bounds.centerX() - halfTimeTextWidth;
+            canvas.drawText(text, xOffsetTime, mYOffset, mTextPaint);
+
+
+            // Draw date text in x-center of screen
+//            SimpleDateFormat dateFormat = new SimpleDateFormat("EEE, MMM dd yyyy", Locale.US);
+//            String date = dateFormat.format(calendar.getTime()).toUpperCase(Locale.US);
+//
+//            float dateTextWidth = dateTextPaint.measureText(date);
+//            float halfDateTextWidth = dateTextWidth / 2;
+//            float xOffsetDate = bounds.centerX() - halfDateTextWidth;
+//            canvas.drawText(date, xOffsetDate, dateYOffset, dateTextPaint);
+
+            // Draw high and low temperature, icon for weather condition
+            if (conditionIcon != null && highTemperature != null && lowTemperature != null) {
+                float highTemperatureTextWidth = highTemperatureTextPaint.measureText(highTemperature);
+                float lowTemperatureTextWidth = lowTemperatureTextPaint.measureText(lowTemperature);
+
+                Rect temperatureBounds = new Rect();
+                highTemperatureTextPaint.getTextBounds(highTemperature, 0, highTemperature.length(), temperatureBounds);
+
+//                float lineYOffset = (dateYOffset + weatherYOffset) / 2 - (temperatureBounds.height() / 2);
+//                canvas.drawLine(bounds.centerX() - 4 * SPACE_BETWEEN_TEMPERATURES, lineYOffset,
+//                        bounds.centerX() + 4 * SPACE_BETWEEN_TEMPERATURES, lineYOffset, linePaint);
+
+                float xOffsetHighTemperature;
+                if (mAmbient) {
+                    xOffsetHighTemperature = bounds.centerX() - ((highTemperatureTextWidth + lowTemperatureTextWidth + SPACE_BETWEEN_TEMPERATURES) / 2);
+                } else {
+                    xOffsetHighTemperature = bounds.centerX() - (highTemperatureTextWidth / 2);
+
+                    canvas.drawBitmap(conditionIcon, xOffsetHighTemperature - conditionIcon.getWidth() - 2 * SPACE_BETWEEN_TEMPERATURES,
+                            weatherYOffset - (temperatureBounds.height() / 2) - (conditionIcon.getHeight() / 2), null);
+                }
+
+                float xOffsetLowTemperature = xOffsetHighTemperature + highTemperatureTextWidth + SPACE_BETWEEN_TEMPERATURES;
+
+                canvas.drawText(highTemperature, xOffsetHighTemperature, weatherYOffset, highTemperatureTextPaint);
+                canvas.drawText(lowTemperature, xOffsetLowTemperature, weatherYOffset, lowTemperatureTextPaint);
+            }
         }
+
+
 
         /**
          * Starts the {@link #mUpdateTimeHandler} timer if it should be running and isn't currently
@@ -295,6 +402,40 @@ public class MyWatchFace extends CanvasWatchFaceService {
                 mUpdateTimeHandler.sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
             }
         }
+
+        @Override
+        public void onConnected(Bundle bundle) {
+            Wearable.DataApi.addListener(mGoogleApiClient, this);
+        }
+
+        @Override
+        public void onConnectionSuspended(int i) {
+
+        }
+
+        @Override
+        public void onConnectionFailed(ConnectionResult connectionResult) {
+
+        }
+
+        @Override
+        public void onDataChanged(DataEventBuffer dataEvents) {
+            for (DataEvent dataEvent : dataEvents) {
+                if (dataEvent.getType() == DataEvent.TYPE_CHANGED) {
+                    DataItem dataItem = dataEvent.getDataItem();
+                    if (dataItem.getUri().getPath().compareTo(WEATHER_PATH) == 0) {
+                        DataMap dataMap = DataMapItem.fromDataItem(dataItem).getDataMap();
+                        this.highTemperature = dataMap.getString(HIGH_TEMPERATURE);
+                        this.lowTemperature = dataMap.getString(LOW_TEMPERATURE);
+                        this.conditionIcon = BitmapFactory.decodeResource(resources, getIconResourceForWeatherCondition(dataMap.getInt(WEATHER_CONDITION)));
+
+                        invalidate();
+                    }
+                }
+            }
+        }
+
+
     }
     public static int getIconResourceForWeatherCondition(int weatherId) {
         // Based on weather code data found at:
