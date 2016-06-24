@@ -315,7 +315,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                         new String[] {Long.toString(dayTime.setJulianDay(julianStartDay-1))});
 
                 notifyWeather();
-                notifyWatchFaceAboutWeather();
+                notifyWatchFace();
             }
 
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
@@ -407,14 +407,13 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
             }
         }
     }
-    private void notifyWatchFaceAboutWeather() {
+    private void notifyWatchFace() {
         Context context = getContext();
 
         String location = Utility.getPreferredLocation(context);
         Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithStartDate(
                 location, System.currentTimeMillis());
 
-        // we'll query our contentProvider, as always
         Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
         if (cursor == null) {
             return;

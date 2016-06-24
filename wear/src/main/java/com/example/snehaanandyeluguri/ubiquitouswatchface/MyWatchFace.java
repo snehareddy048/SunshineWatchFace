@@ -106,16 +106,13 @@ public class MyWatchFace extends CanvasWatchFaceService {
         private static final String HIGH_TEMPERATURE = "high_temperature";
         private static final String LOW_TEMPERATURE = "low_temperature";
         private static final String WEATHER_CONDITION = "weather_condition";
-        boolean registeredTimeZoneReceiver = false;
         int digitalTextColor = -1;
 
         private GoogleApiClient mGoogleApiClient;
         Bitmap conditionIcon;
         String highTemperature;
         String lowTemperature;
-
-        Paint highTemperatureTextPaint;
-        Paint lowTemperatureTextPaint;
+        Paint temperatureTextPaint;
 
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
@@ -171,8 +168,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
             mTextPaint = new Paint();
             mTextPaint = createTextPaint(digitalTextColor);
-            highTemperatureTextPaint = createTextPaint(digitalTextColor);
-            lowTemperatureTextPaint = createTextPaint(digitalTextColor);
+            temperatureTextPaint=createTextPaint(digitalTextColor);
 
             mTime = new Time();
         }
@@ -251,8 +247,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
             float temperatureTextSize = resources.getDimension(isRound?R.dimen.temperature_text_size_round:
                     R.dimen.temperature_text_size);
-            highTemperatureTextPaint.setTextSize(temperatureTextSize);
-            lowTemperatureTextPaint.setTextSize(temperatureTextSize);
+            temperatureTextPaint.setTextSize(temperatureTextSize);
         }
 
         @Override
@@ -274,8 +269,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
                 mAmbient = inAmbientMode;
                 if (mLowBitAmbient) {
                     mTextPaint.setAntiAlias(!inAmbientMode);
-                    highTemperatureTextPaint.setAntiAlias(!inAmbientMode);
-                    lowTemperatureTextPaint.setAntiAlias(!inAmbientMode);
+                    temperatureTextPaint.setAntiAlias(!inAmbientMode);
                 }
                 invalidate();
             }
@@ -318,11 +312,8 @@ public class MyWatchFace extends CanvasWatchFaceService {
                 canvas.drawRect(0, 0, bounds.width(), bounds.height(), mBackgroundPaint);
             }
 
-            // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             mTime.setToNow();
-            String text = mAmbient
-                    ? String.format("%d:%02d", mTime.hour, mTime.minute)
-                    : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
+            String text = String.format("%d:%02d", mTime.hour, mTime.minute);
 
             // Draw time text in x-center of screen
             float timeTextWidth = mTextPaint.measureText(text);
@@ -331,41 +322,28 @@ public class MyWatchFace extends CanvasWatchFaceService {
             canvas.drawText(text, xOffsetTime, mYOffset, mTextPaint);
 
 
-            // Draw date text in x-center of screen
-//            SimpleDateFormat dateFormat = new SimpleDateFormat("EEE, MMM dd yyyy", Locale.US);
-//            String date = dateFormat.format(calendar.getTime()).toUpperCase(Locale.US);
-//
-//            float dateTextWidth = dateTextPaint.measureText(date);
-//            float halfDateTextWidth = dateTextWidth / 2;
-//            float xOffsetDate = bounds.centerX() - halfDateTextWidth;
-//            canvas.drawText(date, xOffsetDate, dateYOffset, dateTextPaint);
-
-            // Draw high and low temperature, icon for weather condition
+            // High and low temperature, icon for weather
             if (conditionIcon != null && highTemperature != null && lowTemperature != null) {
-                float highTemperatureTextWidth = highTemperatureTextPaint.measureText(highTemperature);
-                float lowTemperatureTextWidth = lowTemperatureTextPaint.measureText(lowTemperature);
+                float highTemperatureTextWidth = temperatureTextPaint.measureText(highTemperature);
+                float lowTemperatureTextWidth = temperatureTextPaint.measureText(lowTemperature);
 
                 Rect temperatureBounds = new Rect();
-                highTemperatureTextPaint.getTextBounds(highTemperature, 0, highTemperature.length(), temperatureBounds);
+                temperatureTextPaint.getTextBounds(highTemperature, 0, highTemperature.length(), temperatureBounds);
 
-//                float lineYOffset = (dateYOffset + weatherYOffset) / 2 - (temperatureBounds.height() / 2);
-//                canvas.drawLine(bounds.centerX() - 4 * SPACE_BETWEEN_TEMPERATURES, lineYOffset,
-//                        bounds.centerX() + 4 * SPACE_BETWEEN_TEMPERATURES, lineYOffset, linePaint);
-
-                float xOffsetHighTemperature;
+                float mXHighTemperature;
                 if (mAmbient) {
-                    xOffsetHighTemperature = bounds.centerX() - ((highTemperatureTextWidth + lowTemperatureTextWidth + SPACE_BETWEEN_TEMPERATURES) / 2);
+                    mXHighTemperature = bounds.centerX() - ((highTemperatureTextWidth + lowTemperatureTextWidth + SPACE_BETWEEN_TEMPERATURES) / 2);
                 } else {
-                    xOffsetHighTemperature = bounds.centerX() - (highTemperatureTextWidth / 2);
+                    mXHighTemperature = bounds.centerX() - (highTemperatureTextWidth / 2);
 
-                    canvas.drawBitmap(conditionIcon, xOffsetHighTemperature - conditionIcon.getWidth() - 2 * SPACE_BETWEEN_TEMPERATURES,
+                    canvas.drawBitmap(conditionIcon, mXHighTemperature - conditionIcon.getWidth() - 2 * SPACE_BETWEEN_TEMPERATURES,
                             weatherYOffset - (temperatureBounds.height() / 2) - (conditionIcon.getHeight() / 2), null);
                 }
 
-                float xOffsetLowTemperature = xOffsetHighTemperature + highTemperatureTextWidth + SPACE_BETWEEN_TEMPERATURES;
+                float xOffsetLowTemperature = mXHighTemperature + highTemperatureTextWidth + SPACE_BETWEEN_TEMPERATURES;
 
-                canvas.drawText(highTemperature, xOffsetHighTemperature, weatherYOffset, highTemperatureTextPaint);
-                canvas.drawText(lowTemperature, xOffsetLowTemperature, weatherYOffset, lowTemperatureTextPaint);
+                canvas.drawText(highTemperature, mXHighTemperature, weatherYOffset, temperatureTextPaint);
+                canvas.drawText(lowTemperature, xOffsetLowTemperature, weatherYOffset, temperatureTextPaint);
             }
         }
 
@@ -428,7 +406,6 @@ public class MyWatchFace extends CanvasWatchFaceService {
                         this.highTemperature = dataMap.getString(HIGH_TEMPERATURE);
                         this.lowTemperature = dataMap.getString(LOW_TEMPERATURE);
                         this.conditionIcon = BitmapFactory.decodeResource(resources, getIconResourceForWeatherCondition(dataMap.getInt(WEATHER_CONDITION)));
-
                         invalidate();
                     }
                 }
